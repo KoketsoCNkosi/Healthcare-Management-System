@@ -1,4 +1,13 @@
+<?php
+// auth_check.php — Session Authentication Check
+require_once __DIR__ . '/config.php';
 
+if (session_status() === PHP_SESSION_NONE) session_start();
+
+function check_authentication(?string $required_role = null): array {
+    global $conn;
+
+    $user = null;
 
     // Try cookie-based session first
     if (isset($_COOKIE['session_id'])) {
