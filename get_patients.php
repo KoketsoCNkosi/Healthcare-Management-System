@@ -1,4 +1,7 @@
-
+<?php
+// get_patients.php — Admin only
+require_once __DIR__ . '/config.php';
+require_once __DIR__ . '/auth_check.php';
 
 check_authentication('admin');
 
