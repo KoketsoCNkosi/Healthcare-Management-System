@@ -1,33 +1,49 @@
 <?php
-// auth_check.php - Session Authentication Check
-require_once 'config.php';
-session_start();
+// auth_check.php — Session Authentication Check
+require_once __DIR__ . '/config.php';
 
-function check_authentication() {
+if (session_status() === PHP_SESSION_NONE) session_start();
+
+function check_authentication(?string $required_role = null): array {
     global $conn;
-    
-    if (!isset($_COOKIE['session_id']) && !isset($_SESSION['user_id'])) {
-        generate_response(false, 'Authentication required');
-    }
 
+    $user = null;
+
+    // Try cookie-based session first
     if (isset($_COOKIE['session_id'])) {
         $stmt = $conn->prepare("
-            SELECT user_id, user_type, expires_at 
-            FROM Sessions 
+            SELECT user_id, user_type, expires_at
+            FROM Sessions
             WHERE session_id = ? AND expires_at > NOW()
         ");
         $stmt->execute([$_COOKIE['session_id']]);
         $session = $stmt->fetch();
 
-        if (!$session) {
-            generate_response(false, 'Session expired. Please login again.');
+        if ($session) {
+            $_SESSION['user_id']   = $session['user_id'];
+            $_SESSION['user_type'] = $session['user_type'];
+            $user = $session;
+        } else {
+            // Expired — clear cookie
+            setcookie('session_id', '', time() - 3600, '/');
         }
-
-        $_SESSION['user_id'] = $session['user_id'];
-        $_SESSION['user_type'] = $session['user_type'];
     }
-}
 
-// Check authentication for protected routes
-check_authentication();
-?>
+    // Fallback to PHP session
+    if (!$user && isset($_SESSION['user_id'])) {
+        $user = [
+            'user_id'   => $_SESSION['user_id'],
+            'user_type' => $_SESSION['user_type'],
+        ];
+    }
+
+    if (!$user) {
+        json_out(false, 'Authentication required. Please log in.', null, 401);
+    }
+
+    if ($required_role && $user['user_type'] !== $required_role && $user['user_type'] !== 'admin') {
+        json_out(false, 'Access denied. Insufficient permissions.', null, 403);
+    }
+
+    return $user;
+}
