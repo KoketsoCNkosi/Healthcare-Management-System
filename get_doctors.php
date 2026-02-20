@@ -20,4 +20,8 @@ try {
 
     $stmt = $conn->prepare($sql);
     $stmt->execute($params);
-    json_out(true, 'Doctors retrieved successfully', $stmt->fetchAll())
+    json_out(true, 'Doctors retrieved successfully', $stmt->fetchAll());
+} catch (Exception $e) {
+    error_log("Get doctors error: " . $e->getMessage());
+    json_out(false, 'Failed to retrieve doctors', null, 500);
+}
