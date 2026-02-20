@@ -1,21 +1,27 @@
 <?php
-// get_doctors.php - Retrieve Available Doctors
-require_once 'config.php';
+require_once __DIR__ . '/config.php';
 
 try {
-    $stmt = $conn->prepare("
-        SELECT doctor_id, name, specialization, contact, email
-        FROM Doctors 
-        WHERE status = 'Active'
-        ORDER BY name ASC
-    ");
-    $stmt->execute();
+    $search = sanitize_input($_GET['search'] ?? '');
+    $spec   = sanitize_input($_GET['specialization'] ?? '');
 
-    $doctors = $stmt->fetchAll();
-    generate_response(true, 'Doctors retrieved successfully', $doctors);
+    $sql    = "SELECT doctor_id, name, specialization, contact, email FROM Doctors WHERE status = 'Active'";
+    $params = [];
 
+    if (!empty($search)) {
+        $sql .= " AND (name LIKE ? OR specialization LIKE ?)";
+        $params[] = "%$search%"; $params[] = "%$search%";
+    }
+    if (!empty($spec)) {
+        $sql .= " AND specialization = ?";
+        $params[] = $spec;
+    }
+    $sql .= " ORDER BY name ASC";
+
+    $stmt = $conn->prepare($sql);
+    $stmt->execute($params);
+    json_out(true, 'Doctors retrieved successfully', $stmt->fetchAll());
 } catch (Exception $e) {
     error_log("Get doctors error: " . $e->getMessage());
-    generate_response(false, 'Failed to retrieve doctors');
+    json_out(false, 'Failed to retrieve doctors', null, 500);
 }
-?>
