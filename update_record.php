@@ -1,47 +1,35 @@
 <?php
-// update_record.php - Medical Record Update Handler
-require_once 'config.php';
+require_once __DIR__ . '/config.php';
+require_once __DIR__ . '/auth_check.php';
 
-if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    generate_response(false, 'Invalid request method');
-}
+check_authentication('doctor');
+
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') json_out(false, 'Invalid request method', null, 405);
 
 try {
-    // Get and sanitize input data
     $appointment_id = (int)($_POST['appointment_id'] ?? 0);
-    $visit_date = $_POST['visit_date'] ?? '';
-    $diagnosis = sanitize_input($_POST['diagnosis'] ?? '');
-    $treatment = sanitize_input($_POST['treatment'] ?? '');
-    $prescription = sanitize_input($_POST['prescription'] ?? '');
-    $notes = sanitize_input($_POST['notes'] ?? '');
+    $visit_date     = $_POST['visit_date'] ?? '';
+    $diagnosis      = sanitize_input($_POST['diagnosis'] ?? '');
+    $treatment      = sanitize_input($_POST['treatment'] ?? '');
+    $prescription   = sanitize_input($_POST['prescription'] ?? '');
+    $notes          = sanitize_input($_POST['notes'] ?? '');
 
-    // Validation
     $errors = [];
-    
     if ($appointment_id <= 0) $errors[] = 'Valid appointment ID is required';
-    if (empty($visit_date)) $errors[] = 'Visit date is required';
-    if (empty($diagnosis)) $errors[] = 'Diagnosis is required';
-    if (empty($treatment)) $errors[] = 'Treatment information is required';
+    if (empty($visit_date))   $errors[] = 'Visit date is required';
+    if (empty($diagnosis))    $errors[] = 'Diagnosis is required';
+    if (empty($treatment))    $errors[] = 'Treatment is required';
 
-    // Validate visit date
-    try {
-        $visit_datetime = new DateTime($visit_date);
-        $today = new DateTime();
-        
-        if ($visit_datetime > $today) {
-            $errors[] = 'Visit date cannot be in the future';
-        }
-    } catch (Exception $e) {
-        $errors[] = 'Invalid visit date format';
+    if (!empty($visit_date)) {
+        try {
+            if ((new DateTime($visit_date)) > new DateTime()) $errors[] = 'Visit date cannot be in the future';
+        } catch (Exception) { $errors[] = 'Invalid visit date format'; }
     }
 
-    if (!empty($errors)) {
-        generate_response(false, implode(', ', $errors));
-    }
+    if (!empty($errors)) json_out(false, implode(' | ', $errors));
 
-    // Get appointment details and verify it exists
     $stmt = $conn->prepare("
-        SELECT a.*, p.name as patient_name, d.name as doctor_name 
+        SELECT a.*, p.name as patient_name, d.name as doctor_name
         FROM Appointments a
         JOIN Patients p ON a.patient_id = p.patient_id
         JOIN Doctors d ON a.doctor_id = d.doctor_id
@@ -49,66 +37,30 @@ try {
     ");
     $stmt->execute([$appointment_id]);
     $appointment = $stmt->fetch();
-    
-    if (!$appointment) {
-        generate_response(false, 'Appointment not found');
-    }
+    if (!$appointment) json_out(false, 'Appointment not found');
 
-    // Check if medical record already exists for this appointment
-    $stmt = $conn->prepare("SELECT record_id FROM MedicalRecords WHERE appointment_id = ?");
-    $stmt->execute([$appointment_id]);
-    $existing_record = $stmt->fetch();
+    $existing = $conn->prepare("SELECT record_id FROM MedicalRecords WHERE appointment_id = ?");
+    $existing->execute([$appointment_id]);
+    $rec = $existing->fetch();
 
-    if ($existing_record) {
-        // Update existing record
-        $stmt = $conn->prepare("
-            UPDATE MedicalRecords 
-            SET visit_date = ?, diagnosis = ?, treatment = ?, prescription = ?, notes = ?
-            WHERE appointment_id = ?
-        ");
-        $result = $stmt->execute([$visit_date, $diagnosis, $treatment, $prescription, $notes, $appointment_id]);
-        $record_id = $existing_record['record_id'];
-        $action = 'updated';
+    if ($rec) {
+        $conn->prepare("UPDATE MedicalRecords SET visit_date=?,diagnosis=?,treatment=?,prescription=?,notes=? WHERE appointment_id=?")
+             ->execute([$visit_date, $diagnosis, $treatment, $prescription, $notes, $appointment_id]);
+        $record_id = $rec['record_id']; $action = 'updated';
     } else {
-        // Insert new record
-        $stmt = $conn->prepare("
-            INSERT INTO MedicalRecords (appointment_id, patient_id, doctor_id, visit_date, diagnosis, treatment, prescription, notes) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ");
-        $result = $stmt->execute([
-            $appointment_id, $appointment['patient_id'], $appointment['doctor_id'],
-            $visit_date, $diagnosis, $treatment, $prescription, $notes
-        ]);
-        $record_id = $conn->lastInsertId();
-        $action = 'created';
+        $conn->prepare("INSERT INTO MedicalRecords (appointment_id,patient_id,doctor_id,visit_date,diagnosis,treatment,prescription,notes) VALUES (?,?,?,?,?,?,?,?)")
+             ->execute([$appointment_id, $appointment['patient_id'], $appointment['doctor_id'], $visit_date, $diagnosis, $treatment, $prescription, $notes]);
+        $record_id = (int)$conn->lastInsertId(); $action = 'created';
     }
 
-    if ($result) {
-        // Update appointment status to completed
-        $stmt = $conn->prepare("UPDATE Appointments SET status = 'Completed' WHERE appointment_id = ?");
-        $stmt->execute([$appointment_id]);
-        
-        // Get complete record details for response
-        $stmt = $conn->prepare("
-            SELECT mr.*, p.name as patient_name, d.name as doctor_name 
-            FROM MedicalRecords mr
-            JOIN Patients p ON mr.patient_id = p.patient_id
-            JOIN Doctors d ON mr.doctor_id = d.doctor_id
-            WHERE mr.record_id = ?
-        ");
-        $stmt->execute([$record_id]);
-        $record_details = $stmt->fetch();
-        
-        generate_response(true, "Medical record {$action} successfully!", $record_details);
-    } else {
-        generate_response(false, 'Failed to update medical record. Please try again.');
-    }
+    $conn->prepare("UPDATE Appointments SET status='Completed' WHERE appointment_id=?")->execute([$appointment_id]);
 
-} catch (PDOException $e) {
-    error_log("Medical record update error: " . $e->getMessage());
-    generate_response(false, 'Database error occurred. Please contact support.');
+    $detail = $conn->prepare("SELECT mr.*, p.name as patient_name, d.name as doctor_name FROM MedicalRecords mr JOIN Patients p ON mr.patient_id=p.patient_id JOIN Doctors d ON mr.doctor_id=d.doctor_id WHERE mr.record_id=?");
+    $detail->execute([$record_id]);
+
+    json_out(true, "Medical record {$action} successfully!", $detail->fetch());
+
 } catch (Exception $e) {
-    error_log("General error: " . $e->getMessage());
-    generate_response(false, 'An unexpected error occurred. Please try again.');
+    error_log("Medical record error: " . $e->getMessage());
+    json_out(false, 'An unexpected error occurred.', null, 500);
 }
-?>
