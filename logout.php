@@ -1,25 +1,15 @@
 <?php
-// logout.php - Logout Handler
-require_once 'config.php';
-session_start();
+require_once __DIR__ . '/config.php';
+if (session_status() === PHP_SESSION_NONE) session_start();
 
 try {
     if (isset($_COOKIE['session_id'])) {
-        // Remove session from database
-        $stmt = $conn->prepare("DELETE FROM Sessions WHERE session_id = ?");
-        $stmt->execute([$_COOKIE['session_id']]);
-        
-        // Clear cookie
+        $conn->prepare("DELETE FROM Sessions WHERE session_id = ?")->execute([$_COOKIE['session_id']]);
         setcookie('session_id', '', time() - 3600, '/');
     }
-
-    // Destroy PHP session
     session_destroy();
-    
-    generate_response(true, 'Logged out successfully');
-
+    json_out(true, 'Logged out successfully');
 } catch (Exception $e) {
     error_log("Logout error: " . $e->getMessage());
-    generate_response(false, 'Logout failed');
+    json_out(false, 'Logout failed', null, 500);
 }
-?>
